@@ -99,6 +99,14 @@ Mögliche zukünftige Features könnten sein:
 * Unterstützung für weitere Annotationstypen (z.B. Keypoints, Masken).
 * Verbesserte Bearbeitungswerkzeuge für Polygone.
 
-## 📜 Lizenz
+## 📜 License
 
-Dieses Projekt steht unter der MIT-Lizenz. Details findest du in der `LICENSE`-Datei.
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**. This means it is free to use, share, and adapt for personal and non-commercial purposes, provided that appropriate credit is given.
+
+See the `NOTICE.md` file for full license details, including the licenses of third-party libraries used in this project.
+
+## 💼 Commercial Use
+
+The CC BY-NC 4.0 license does not permit commercial use.
+
+If you wish to integrate this software into a commercial project, please contact me to request a commercial license. Affordable licenses are available, with the price depending on the scope and scale of your project.
