@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML Bild-Annotator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .canvas-outer-container {
+            width: 100%;
+            max-height: 75vh; 
+            display: flex; 
+            background-color: #e5e7eb; 
+            border-radius: 0.375rem;
+            overflow: auto; 
+        }
+        .canvas-container { 
+            position: relative;
+            width: fit-content; 
+            height: fit-content;
+            margin: 0; 
+            transform-origin: top left; 
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        .annotation-list-item { cursor: pointer; }
+        .annotation-list-item.selected { background-color: #e0e7ff; }
+        .resize-handle {
+            position: absolute;
+            background-color: rgba(0, 0, 255, 0.7);
+            border: 1px solid white;
+            z-index: 10;
+            box-sizing: border-box;
+        }
+        .nw-handle { cursor: nwse-resize; } .ne-handle { cursor: nesw-resize; }
+        .sw-handle { cursor: nesw-resize; } .se-handle { cursor: nwse-resize; }
+        .n-handle { cursor: ns-resize; } .s-handle { cursor: ns-resize; }
+        .w-handle { cursor: ew-resize; } .e-handle { cursor: ew-resize; }
+
+        .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 8px; }
+        .quick-label-button { background-color: #d1d5db; color: #1f2937; transition: background-color 0.15s ease-in-out; }
+        .quick-label-button:hover { background-color: #9ca3af; }
+        
+        .global-label-list-item { cursor: pointer; }
+        .global-label-list-item.active { background-color: #bfdbfe; color: #1e40af; font-weight: 600; border-color: #3b82f6;}
+
+        .zoom-controls { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+        .zoom-button { background-color: #e5e7eb; color: #374151; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 0.375rem; font-size: 0.875rem; transition: background-color 0.15s ease-in-out; }
+        .zoom-button:hover { background-color: #d1d5db; }
+        .zoom-button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #zoomLevelDisplay { padding: 0.25rem 0.5rem; font-size: 0.875rem; min-width: 50px; text-align: center; border: 1px solid #d1d5db; border-radius: 0.375rem; }
+        
+        .loading-spinner {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 8px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden { display: none !important; } 
+
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+    <div class="container mx-auto max-w-7xl bg-white p-6 rounded-lg shadow-xl">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 text-center">Bild-Annotator</h1>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <aside class="md:col-span-1 space-y-6">
+                <div>
+                    <label for="imageUpload" class="block text-sm font-medium text-gray-700 mb-1">Bilder hochladen:</label>
+                    <input type="file" id="imageUpload" accept="image/*" multiple class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                </div>
+
+                <div id="imageNavigationControls" class="hidden space-y-2">
+                    <div class="flex items-center justify-between">
+                        <button id="prevImageButton" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out">< Vorheriges</button>
+                        <span id="imageCounter" class="text-sm text-gray-600">Bild 0/0</span>
+                        <button id="nextImageButton" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out">Nächstes ></button>
+                    </div>
+                    <p id="currentImageName" class="text-center text-sm text-gray-500 truncate"></p>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Zoom:</label>
+                    <div class="zoom-controls">
+                        <button id="zoomOutButton" class="zoom-button">-</button>
+                        <span id="zoomLevelDisplay">100%</span>
+                        <button id="zoomInButton" class="zoom-button">+</button>
+                        <button id="zoomResetButton" class="zoom-button">Anpassen</button> 
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Werkzeug auswählen:</label>
+                    <div class="flex space-x-2">
+                        <button id="toolRect" class="tool-button bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out w-full" data-tool="rect">Bounding Box</button>
+                        <button id="toolPolygon" class="tool-button bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out w-full" data-tool="polygon">Polygon (WIP)</button>
+                    </div>
+                     <button id="toolSelect" class="tool-button bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out w-full mt-2" data-tool="select">Auswählen/Bearbeiten</button>
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Globale Klassenauswahl:</h3>
+                    <button id="dynamicLabelingToggle" class="w-full mb-2 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md text-sm">Dynamische Labelvergabe (Aktiv)</button>
+                    <div id="globalLabelList" class="max-h-40 overflow-y-auto bg-gray-50 p-3 rounded-md border border-gray-200">
+                        <p class="text-sm text-gray-500">Noch keine Klassen verwendet.</p>
+                    </div>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Annotationen für aktuelles Bild:</h3>
+                    <div id="annotationList" class="max-h-60 overflow-y-auto bg-gray-50 p-3 rounded-md border border-gray-200">
+                        <p class="text-sm text-gray-500">Noch keine Annotationen.</p>
+                    </div>
+                    <button id="deleteAnnotation" class="mt-3 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-md text-sm w-full transition duration-150 ease-in-out">Ausgewählte löschen</button>
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Exportieren (Alle Bilder):</h3>
+                    <div class="space-y-2">
+                        <button id="exportPascalVoc" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-md text-sm w-full transition duration-150 ease-in-out">Als Pascal VOC (.zip)</button>
+                        <button id="exportCoco" class="bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded-md text-sm w-full transition duration-150 ease-in-out">Als COCO (.json)</button>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="md:col-span-2">
+                <div id="canvasOuterContainer" class="canvas-outer-container"> 
+                    <div id="canvasContainer" class="canvas-container">
+                        <canvas id="annotationCanvas"></canvas>
+                        <div id="resizeHandlesContainer"></div>
+                    </div>
+                </div>
+                <p id="canvasHelperText" class="text-sm text-gray-500 mt-2 text-center">Bitte lade ein oder mehrere Bilder hoch, um mit der Annotation zu beginnen.</p>
+            </main>
+        </div>
+    </div>
+
+    <div id="labelModal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-lg font-semibold mb-3">Annotation benennen & Attribute</h3>
+            <div class="mb-3">
+                <label for="modalAnnotationLabel" class="block text-sm font-medium text-gray-700 mb-1">Label:</label>
+                <input type="text" id="modalAnnotationLabel" placeholder="z.B. Hund, Fahrrad" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+            </div>
+            
+            <div class="mb-4"> 
+                <h4 class="text-sm font-medium text-gray-700 mb-1">Schnellauswahl (Klick zum Übernehmen):</h4>
+                <div id="quickLabelContainer" class="flex flex-wrap gap-2">
+                    <p class="text-xs text-gray-500 italic w-full">Noch keine Labels verwendet.</p>
+                </div>
+            </div>
+
+            <div id="modalAttributesContainer" class="mb-3 space-y-2">
+                <div class="flex items-center">
+                    <input id="modalTruncated" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                    <label for="modalTruncated" class="ml-2 block text-sm text-gray-900">Abgeschnitten (Truncated)</label>
+                </div>
+                <div class="flex items-center">
+                    <input id="modalDifficult" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                    <label for="modalDifficult" class="ml-2 block text-sm text-gray-900">Schwierig (Difficult)</label>
+                </div>
+                <div class="flex items-center">
+                    <input id="modalIscrowd" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                    <label for="modalIscrowd" class="ml-2 block text-sm text-gray-900">Menschenmenge (iscrowd - COCO)</label>
+                </div>
+            </div>
+
+            <div class="mt-4 flex justify-end space-x-2">
+                <button id="cancelModalLabel" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-3 rounded-md text-sm">Abbrechen</button>
+                <button id="submitModalLabel" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-3 rounded-md text-sm">Speichern</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const imageUpload = document.getElementById('imageUpload');
+        const canvas = document.getElementById('annotationCanvas');
+        const ctx = canvas.getContext('2d');
+        const annotationListDiv = document.getElementById('annotationList');
+        const toolButtons = document.querySelectorAll('.tool-button');
+        const deleteAnnotationButton = document.getElementById('deleteAnnotation');
+        const exportPascalVocButton = document.getElementById('exportPascalVoc');
+        const exportCocoButton = document.getElementById('exportCoco');
+        const canvasHelperText = document.getElementById('canvasHelperText');
+        const canvasOuterContainer = document.getElementById('canvasOuterContainer'); 
+        const canvasContainer = document.getElementById('canvasContainer'); 
+        const resizeHandlesContainer = document.getElementById('resizeHandlesContainer');
+
+        const imageNavigationControls = document.getElementById('imageNavigationControls');
+        const prevImageButton = document.getElementById('prevImageButton');
+        const nextImageButton = document.getElementById('nextImageButton');
+        const imageCounter = document.getElementById('imageCounter');
+        const currentImageNameEl = document.getElementById('currentImageName');
+
+        const labelModal = document.getElementById('labelModal');
+        const modalAnnotationLabelInput = document.getElementById('modalAnnotationLabel');
+        const modalAttributesContainer = document.getElementById('modalAttributesContainer');
+        const modalTruncatedCheckbox = document.getElementById('modalTruncated');
+        const modalDifficultCheckbox = document.getElementById('modalDifficult');
+        const modalIscrowdCheckbox = document.getElementById('modalIscrowd');
+        const submitModalLabelButton = document.getElementById('submitModalLabel');
+        const cancelModalLabelButton = document.getElementById('cancelModalLabel');
+        const quickLabelContainer = document.getElementById('quickLabelContainer');
+        let currentAnnotationForLabeling = null; 
+
+        const globalLabelListDiv = document.getElementById('globalLabelList');
+        const dynamicLabelingToggleButton = document.getElementById('dynamicLabelingToggle');
+        let globallySelectedLabel = null; 
+        let isDynamicLabelingActive = true; 
+
+        const zoomInButton = document.getElementById('zoomInButton');
+        const zoomOutButton = document.getElementById('zoomOutButton');
+        const zoomResetButton = document.getElementById('zoomResetButton');
+        const zoomLevelDisplay = document.getElementById('zoomLevelDisplay');
+        let currentCssZoom = 1.0; 
+        const ZOOM_STEP = 0.1;
+        const MIN_ZOOM = 0.1; 
+        const MAX_ZOOM = 3.0;
+        const BASE_LINE_WIDTH = 2; 
+        const BASE_FONT_SIZE = 14; 
+        const HANDLE_SIZE = 10; 
+
+        let allImageData = []; 
+        let currentImageIndex = -1;
+        let uniqueLabels = new Set(); 
+
+        let currentTool = 'rect'; 
+        let isDrawing = false;
+        let startX, startY, currentX, currentY; 
+        let selectedAnnotationId = null;
+        let currentPolygonPoints = []; 
+        let dragging = false;
+        let dragOffsetX, dragOffsetY; 
+        let resizing = false;
+        let resizeHandle = null;
+        let filesToProcessCount = 0; 
+        let filesProcessedThisBatch = 0; 
+
+        imageUpload.addEventListener('change', handleImageUpload);
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('click', handleCanvasClick); 
+        
+        toolButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                currentTool = button.dataset.tool;
+                isDrawing = false; currentPolygonPoints = []; selectedAnnotationId = null; 
+                updateToolButtons(); redrawCanvas(); removeResizeHandles(); 
+                canvas.style.cursor = currentTool === 'rect' || currentTool === 'polygon' ? 'crosshair' : 'default';
+            });
+        });
+
+        deleteAnnotationButton.addEventListener('click', handleDeleteAnnotation);
+        
+        exportPascalVocButton.addEventListener('click', () => {
+            console.log("Pascal VOC export button clicked.");
+            try { exportAllToPascalVoc(); } catch (e) { console.error("Error in exportAllToPascalVoc EL:", e); showCustomAlert("Fehler: Pascal VOC Export: " + e.message); }
+        });
+        exportCocoButton.addEventListener('click', () => {
+            console.log("COCO export button clicked.");
+            try { exportAllToCoco(); } catch (e) { console.error("Error in exportAllToCoco EL:", e); showCustomAlert("Fehler: COCO Export: " + e.message); }
+        });       
+        
+        prevImageButton.addEventListener('click', showPrevImage);
+        nextImageButton.addEventListener('click', showNextImage);
+        dynamicLabelingToggleButton.addEventListener('click', toggleDynamicLabeling);
+
+        zoomInButton.addEventListener('click', () => applyZoom(currentCssZoom + ZOOM_STEP));
+        zoomOutButton.addEventListener('click', () => applyZoom(currentCssZoom - ZOOM_STEP));
+        zoomResetButton.addEventListener('click', () => {
+            if (currentImageIndex !== -1 && allImageData[currentImageIndex]) {
+                applyOptimalFitZoom();
+            }
+        });
+
+        submitModalLabelButton.addEventListener('click', () => {
+            saveAnnotationLabel(modalAnnotationLabelInput.value.trim());
+        });
+
+        cancelModalLabelButton.addEventListener('click', () => {
+            if (currentAnnotationForLabeling && !currentAnnotationForLabeling.label && currentImageIndex !== -1) {
+                const currentData = allImageData[currentImageIndex];
+                currentData.annotations = currentData.annotations.filter(ann => ann.id !== currentAnnotationForLabeling.id);
+            }
+            currentAnnotationForLabeling = null;
+            modalAnnotationLabelInput.value = '';
+            labelModal.style.display = 'none';
+            updateAnnotationList(); redrawCanvas();
+        });
+
+        function calculateOptimalFitZoom() {
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex]) return 1.0; 
+
+            const imageData = allImageData[currentImageIndex];
+            const containerWidth = canvasOuterContainer.clientWidth;
+            const containerHeight = canvasOuterContainer.clientHeight;
+
+            if (imageData.originalWidth === 0 || imageData.originalHeight === 0 || containerWidth === 0 || containerHeight === 0) {
+                return 1.0; 
+            }
+
+            const scaleX = containerWidth / imageData.originalWidth;
+            const scaleY = containerHeight / imageData.originalHeight;
+            
+            return Math.min(scaleX, scaleY);
+        }
+
+        function applyOptimalFitZoom() {
+            const optimalZoom = calculateOptimalFitZoom();
+            applyZoom(optimalZoom);
+        }
+
+
+        function applyZoom(newZoomLevel) {
+            currentCssZoom = Math.max(MIN_ZOOM, Math.min(newZoomLevel, MAX_ZOOM));
+            canvasContainer.style.transform = `scale(${currentCssZoom})`;
+            zoomLevelDisplay.textContent = `${Math.round(currentCssZoom * 100)}%`;
+            zoomInButton.disabled = currentCssZoom >= MAX_ZOOM;
+            zoomOutButton.disabled = currentCssZoom <= MIN_ZOOM;
+            redrawCanvas(); 
+            if (selectedAnnotationId && allImageData[currentImageIndex]) {
+                const selectedAnn = allImageData[currentImageIndex].annotations.find(a => a.id === selectedAnnotationId);
+                if (selectedAnn) updateResizeHandles(selectedAnn); 
+            }
+        }
+
+        function saveAnnotationLabel(label) {
+            if (currentAnnotationForLabeling && currentImageIndex !== -1) {
+                const annotation = allImageData[currentImageIndex].annotations.find(a => a.id === currentAnnotationForLabeling.id);
+                if (annotation) {
+                    if (label) {
+                        annotation.label = label;
+                        uniqueLabels.add(label); 
+                        updateQuickLabelSelector(); 
+                        updateGlobalLabelList(); 
+                    } else if (!annotation.label) { 
+                         showCustomAlert("Bitte gib ein Label ein.");
+                         return; 
+                    }
+                    
+                    if (isDynamicLabelingActive) {
+                        annotation.truncated = modalTruncatedCheckbox.checked;
+                        annotation.difficult = modalDifficultCheckbox.checked;
+                        annotation.iscrowd = modalIscrowdCheckbox.checked; 
+                    } else {
+                        annotation.truncated = false; 
+                        annotation.difficult = false;
+                        annotation.iscrowd = false; 
+                    }
+                }
+                currentAnnotationForLabeling = null;
+                modalAnnotationLabelInput.value = '';
+                labelModal.style.display = 'none';
+                updateAnnotationList(); 
+                redrawCanvas();
+            }
+        }
+        
+        function openLabelModal() {
+            modalAnnotationLabelInput.value = '';
+            modalTruncatedCheckbox.checked = false; 
+            modalDifficultCheckbox.checked = false; 
+            modalIscrowdCheckbox.checked = false; 
+
+            if (isDynamicLabelingActive) {
+                modalAttributesContainer.classList.remove('hidden');
+            } else {
+                modalAttributesContainer.classList.add('hidden');
+            }
+            
+            modalAnnotationLabelInput.focus();
+            updateQuickLabelSelector(); 
+            labelModal.style.display = 'block';
+        }
+
+
+        function toggleDynamicLabeling() {
+            isDynamicLabelingActive = !isDynamicLabelingActive;
+            if (isDynamicLabelingActive) {
+                dynamicLabelingToggleButton.textContent = "Dynamische Labelvergabe (Aktiv)";
+                dynamicLabelingToggleButton.classList.remove('bg-gray-500', 'hover:bg-gray-600');
+                dynamicLabelingToggleButton.classList.add('bg-green-500', 'hover:bg-green-600');
+                globallySelectedLabel = null; 
+            } else {
+                dynamicLabelingToggleButton.textContent = "Globale Klasse verwenden (Aktiv)";
+                dynamicLabelingToggleButton.classList.remove('bg-green-500', 'hover:bg-green-600');
+                dynamicLabelingToggleButton.classList.add('bg-gray-500', 'hover:bg-gray-600');
+            }
+            updateGlobalLabelList(); 
+        }
+
+        function updateGlobalLabelList() {
+            globalLabelListDiv.innerHTML = '';
+            if (uniqueLabels.size === 0) {
+                globalLabelListDiv.innerHTML = '<p class="text-sm text-gray-500">Noch keine Klassen.</p>'; return;
+            }
+            const ul = document.createElement('ul'); ul.className = 'space-y-1';
+            uniqueLabels.forEach(label => {
+                const li = document.createElement('li'); li.textContent = label;
+                li.className = 'global-label-list-item p-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors';
+                if (!isDynamicLabelingActive && label === globallySelectedLabel) li.classList.add('active');
+                li.addEventListener('click', () => {
+                    if (!isDynamicLabelingActive) { globallySelectedLabel = label; } 
+                    else { showCustomAlert("Deaktiviere 'Dynamische Labelvergabe' für globale Auswahl."); return; }
+                    updateGlobalLabelList(); 
+                });
+                ul.appendChild(li);
+            });
+            globalLabelListDiv.appendChild(ul);
+        }
+
+        function updateToolButtons() {
+            toolButtons.forEach(button => {
+                button.classList.toggle('bg-blue-500', button.dataset.tool === currentTool);
+                button.classList.toggle('hover:bg-blue-600', button.dataset.tool === currentTool);
+                button.classList.toggle('text-white', button.dataset.tool === currentTool);
+                button.classList.toggle('bg-gray-300', button.dataset.tool !== currentTool);
+                button.classList.toggle('hover:bg-gray-400', button.dataset.tool !== currentTool);
+                button.classList.toggle('text-gray-800', button.dataset.tool !== currentTool);
+            });
+        }
+
+        function handleImageUpload(event) {
+            const files = event.target.files; if (!files || files.length === 0) return;
+            const startIndexForNewImages = allImageData.length;
+            filesToProcessCount = files.length; filesProcessedThisBatch = 0; 
+            canvasHelperText.textContent = `Lade ${filesToProcessCount} Bilder...`;
+            if (allImageData.length === 0) redrawCanvas();
+            Array.from(files).forEach((file) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        allImageData.push({ name: file.name, imageObject: img, annotations: [], originalWidth: img.width, originalHeight: img.height });
+                        filesProcessedThisBatch++; 
+                        if (filesProcessedThisBatch === 1 && (currentImageIndex === -1 || startIndexForNewImages === 0) ) {
+                             currentImageIndex = startIndexForNewImages; 
+                             displayImage(currentImageIndex);
+                        }
+                        checkAllFilesProcessedInBatch();
+                    };
+                    img.onerror = () => { console.error(`Ladefehler: ${file.name}`); filesProcessedThisBatch++; checkAllFilesProcessedInBatch(); };
+                    img.src = e.target.result;
+                };
+                reader.onerror = () => { console.error(`FileReader Fehler: ${file.name}`); filesProcessedThisBatch++; checkAllFilesProcessedInBatch(); };
+                reader.readAsDataURL(file);
+            });
+            imageUpload.value = null; 
+        }
+
+        function checkAllFilesProcessedInBatch() {
+            if (filesProcessedThisBatch === filesToProcessCount) {
+                if (allImageData.length === 0) {
+                    canvasHelperText.textContent = "Keine Bilder geladen."; currentImageIndex = -1; 
+                    redrawCanvas(); 
+                } else if (currentImageIndex === -1 && allImageData.length > 0) {
+                    currentImageIndex = 0; displayImage(currentImageIndex);
+                }
+                imageNavigationControls.classList.toggle('hidden', allImageData.length === 0);
+                updateImageCounter(); updateGlobalLabelList(); 
+            }
+        }
+
+        function displayImage(index) {
+            if (index < 0 || index >= allImageData.length) { canvasHelperText.textContent = "Bild-Index ungültig."; updateImageCounter(); redrawCanvas(); return; }
+            const imageData = allImageData[index];
+            if (!imageData || !imageData.imageObject || !(imageData.imageObject instanceof Image) || imageData.originalWidth <= 0 || imageData.originalHeight <= 0) {
+                canvasHelperText.textContent = `Fehlerhafte Bilddaten: ${imageData ? imageData.name : '?'}.`;
+                redrawCanvas(); updateImageCounter(); return;
+            }
+            currentImageIndex = index; 
+            canvas.width = imageData.originalWidth; canvas.height = imageData.originalHeight;
+            canvasContainer.style.width = `${canvas.width}px`; canvasContainer.style.height = `${canvas.height}px`;
+            
+            applyOptimalFitZoom(); 
+
+            selectedAnnotationId = null; currentPolygonPoints = [];
+            updateAnnotationList(); redrawCanvas(); removeResizeHandles();
+            canvasHelperText.textContent = `Annotiere: ${imageData.name}`;
+            updateImageCounter(); 
+        }
+        
+        function updateImageCounter() {
+            if (currentImageIndex !== -1 && allImageData.length > 0 && allImageData[currentImageIndex]) {
+                imageCounter.textContent = `Bild ${currentImageIndex + 1}/${allImageData.length}`;
+                currentImageNameEl.textContent = allImageData[currentImageIndex].name;
+                prevImageButton.disabled = currentImageIndex === 0;
+                nextImageButton.disabled = currentImageIndex === allImageData.length - 1;
+                imageNavigationControls.classList.remove('hidden');
+            } else {
+                imageCounter.textContent = "Bild 0/0"; currentImageNameEl.textContent = "";
+                prevImageButton.disabled = true; nextImageButton.disabled = true;
+                if (allImageData.length === 0) imageNavigationControls.classList.add('hidden');
+            }
+        }
+
+        function showPrevImage() { if (currentImageIndex > 0) displayImage(currentImageIndex - 1); }
+        function showNextImage() { if (currentImageIndex < allImageData.length - 1) displayImage(currentImageIndex + 1); }
+
+        function getMousePos(event) {
+            const rect = canvas.getBoundingClientRect(); 
+            let clientX = event.clientX; let clientY = event.clientY;
+            if (event.touches && event.touches.length > 0) { clientX = event.touches[0].clientX; clientY = event.touches[0].clientY; }
+            const mouseXOnScaledCanvas = clientX - rect.left;
+            const mouseYOnScaledCanvas = clientY - rect.top;
+            const imageX = mouseXOnScaledCanvas / currentCssZoom;
+            const imageY = mouseYOnScaledCanvas / currentCssZoom;
+            return { x: imageX, y: imageY };
+        }
+        
+        function updateQuickLabelSelector() {
+            quickLabelContainer.innerHTML = ''; 
+            if (uniqueLabels.size === 0) { quickLabelContainer.innerHTML = '<p class="text-xs text-gray-500 italic w-full">Noch keine Labels.</p>'; return; }
+            uniqueLabels.forEach(label => {
+                const btn = document.createElement('button'); btn.textContent = label;
+                btn.className = 'quick-label-button py-1 px-3 rounded-md text-xs border border-gray-400';
+                btn.onclick = () => { saveAnnotationLabel(label); }; 
+                quickLabelContainer.appendChild(btn);
+            });
+        }
+
+        function handleMouseDown(event) {
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex]) return;
+            const imageData = allImageData[currentImageIndex]; const pos = getMousePos(event); 
+            if (currentTool === 'select') {
+                const clickedHandle = event.target.closest('.resize-handle');
+                if (clickedHandle && selectedAnnotationId) {
+                    resizing = true; resizeHandle = clickedHandle.dataset.handle;
+                    const annotation = imageData.annotations.find(a => a.id === selectedAnnotationId);
+                    startX = annotation.x; startY = annotation.y;
+                    currentX = annotation.x + annotation.width; currentY = annotation.y + annotation.height;
+                    return;
+                }
+                selectedAnnotationId = null; removeResizeHandles();
+                for (let i = imageData.annotations.length - 1; i >= 0; i--) {
+                    const ann = imageData.annotations[i];
+                    if (ann.type === 'rect' && isPointInRect(pos, ann)) {
+                        selectedAnnotationId = ann.id; dragging = true;
+                        dragOffsetX = pos.x - ann.x; dragOffsetY = pos.y - ann.y;
+                        updateAnnotationList(); redrawCanvas(); createResizeHandles(ann); return;
+                    }
+                }
+                if (!selectedAnnotationId) { dragging = false; updateAnnotationList(); redrawCanvas(); }
+            } else if (currentTool === 'rect') { isDrawing = true; startX = pos.x; startY = pos.y; currentX = pos.x; currentY = pos.y; }
+        }
+
+        function handleMouseMove(event) {
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex]) return;
+            const imageData = allImageData[currentImageIndex]; const pos = getMousePos(event);
+            if (resizing && selectedAnnotationId) {
+                const annotation = imageData.annotations.find(a => a.id === selectedAnnotationId);
+                if (!annotation || annotation.type !== 'rect') return;
+                let newX = annotation.x; let newY = annotation.y; let newWidth = annotation.width; let newHeight = annotation.height;
+                if (resizeHandle.includes('w')) { newWidth = currentX - pos.x; newX = pos.x; }
+                if (resizeHandle.includes('e')) { newWidth = pos.x - startX; }
+                if (resizeHandle.includes('n')) { newHeight = currentY - pos.y; newY = pos.y; }
+                if (resizeHandle.includes('s')) { newHeight = pos.y - startY; }
+                if (newWidth < 0) { newX += newWidth; newWidth = Math.abs(newWidth); if (resizeHandle.includes('w')) resizeHandle = resizeHandle.replace('w', 'e'); else if (resizeHandle.includes('e')) resizeHandle = resizeHandle.replace('e', 'w');}
+                if (newHeight < 0) { newY += newHeight; newHeight = Math.abs(newHeight); if (resizeHandle.includes('n')) resizeHandle = resizeHandle.replace('n', 's'); else if (resizeHandle.includes('s')) resizeHandle = resizeHandle.replace('s', 'n');}
+                annotation.x = newX; annotation.y = newY; annotation.width = newWidth; annotation.height = newHeight;
+                redrawCanvas(); updateResizeHandles(annotation); updateAnnotationList(); return;
+            }
+            if (dragging && selectedAnnotationId) {
+                const annotation = imageData.annotations.find(a => a.id === selectedAnnotationId);
+                if (annotation && annotation.type === 'rect') {
+                    annotation.x = pos.x - dragOffsetX; annotation.y = pos.y - dragOffsetY;
+                    annotation.x = Math.max(0, Math.min(annotation.x, imageData.originalWidth - annotation.width));
+                    annotation.y = Math.max(0, Math.min(annotation.y, imageData.originalHeight - annotation.height));
+                    redrawCanvas(); updateResizeHandles(annotation); 
+                }
+            } else if (isDrawing && currentTool === 'rect') {
+                currentX = pos.x; currentY = pos.y; redrawCanvas(); 
+                const tempCtx = canvas.getContext('2d'); 
+                tempCtx.save(); 
+                tempCtx.lineWidth = BASE_LINE_WIDTH / currentCssZoom; 
+                tempCtx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+                tempCtx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+                tempCtx.restore(); 
+            } else if (currentTool === 'polygon' && currentPolygonPoints.length > 0) {
+                redrawCanvas(); 
+                const tempCtx = canvas.getContext('2d'); tempCtx.save();
+                tempCtx.lineWidth = BASE_LINE_WIDTH / currentCssZoom;
+                tempCtx.strokeStyle = 'rgba(0, 0, 255, 0.5)'; 
+                tempCtx.beginPath();
+                if (currentPolygonPoints.length > 0) { 
+                    tempCtx.moveTo(currentPolygonPoints[currentPolygonPoints.length - 1].x, currentPolygonPoints[currentPolygonPoints.length - 1].y);
+                    tempCtx.lineTo(pos.x, pos.y);
+                    tempCtx.stroke();
+                }
+                tempCtx.restore();
+            }
+        }
+
+        function handleMouseUp(event) {
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex]) return;
+            const imageData = allImageData[currentImageIndex];
+            if (resizing) {
+                resizing = false; resizeHandle = null;
+                const annotation = imageData.annotations.find(a => a.id === selectedAnnotationId);
+                if (annotation) { 
+                    // Sicherstellen, dass x, y immer top-left und width/height positiv sind
+                    let x1 = annotation.x;
+                    let y1 = annotation.y;
+                    let x2 = annotation.x + annotation.width;
+                    let y2 = annotation.y + annotation.height;
+
+                    annotation.x = Math.min(x1, x2);
+                    annotation.y = Math.min(y1, y2);
+                    annotation.width = Math.abs(x1 - x2);
+                    annotation.height = Math.abs(y1 - y2);
+                }
+                redrawCanvas(); updateAnnotationList(); return;
+            }
+            if (dragging) { dragging = false; redrawCanvas(); return; }
+            if (isDrawing && currentTool === 'rect') {
+                isDrawing = false; const width = Math.abs(currentX - startX); const height = Math.abs(currentY - startY);
+                if (width > 5 && height > 5) { 
+                    const newAnnotation = { 
+                        id: Date.now(), type: 'rect', 
+                        x: Math.min(startX, currentX), y: Math.min(startY, currentY), 
+                        width: width, height: height, label: '',
+                        truncated: false, difficult: false, iscrowd: false 
+                    };
+                    imageData.annotations.push(newAnnotation); selectedAnnotationId = newAnnotation.id; currentAnnotationForLabeling = newAnnotation;
+                    if (!isDynamicLabelingActive && globallySelectedLabel) {
+                        saveAnnotationLabel(globallySelectedLabel);
+                    } else { 
+                        openLabelModal();
+                    }
+                }
+                redrawCanvas(); updateAnnotationList();
+            }
+        }
+
+        function handleCanvasClick(event) {
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex]) return;
+            const imageData = allImageData[currentImageIndex]; const pos = getMousePos(event);
+            if (currentTool === 'polygon') {
+                currentPolygonPoints.push({ x: pos.x, y: pos.y }); 
+                redrawCanvas(); 
+                
+                if (currentPolygonPoints.length > 2) {
+                    const firstPoint = currentPolygonPoints[0];
+                    const distanceToStart = Math.sqrt(Math.pow(pos.x - firstPoint.x, 2) + Math.pow(pos.y - firstPoint.y, 2));
+                    if (distanceToStart < (10 / currentCssZoom) ) { 
+                        if (currentPolygonPoints.length > 2) { 
+                            const newAnnotation = { 
+                                id: Date.now(), type: 'polygon', 
+                                points: [...currentPolygonPoints.slice(0, -1)], label: '',
+                                truncated: false, difficult: false, iscrowd: false 
+                            };
+                            imageData.annotations.push(newAnnotation); currentPolygonPoints = []; selectedAnnotationId = newAnnotation.id; currentAnnotationForLabeling = newAnnotation;
+                            if (!isDynamicLabelingActive && globallySelectedLabel) {
+                                saveAnnotationLabel(globallySelectedLabel);
+                            } else { 
+                                openLabelModal();
+                            }
+                        } else { currentPolygonPoints = []; }
+                        updateAnnotationList(); redrawCanvas();
+                    }
+                }
+            } else if (currentTool === 'select') {
+                let clickedOnAnnotation = false;
+                for (let i = imageData.annotations.length - 1; i >= 0; i--) {
+                    const ann = imageData.annotations[i];
+                    if (ann.type === 'rect' && isPointInRect(pos, ann)) {
+                        clickedOnAnnotation = true; if (selectedAnnotationId !== ann.id) { selectedAnnotationId = ann.id; createResizeHandles(ann); } break;
+                    }
+                }
+                if (!clickedOnAnnotation) { selectedAnnotationId = null; removeResizeHandles(); }
+                updateAnnotationList(); redrawCanvas();
+            }
+        }
+        
+        function isPointInRect(point, rect) { return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height; }
+
+        function redrawCanvas() {
+            const currentCtx = canvas.getContext('2d'); 
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex] || !allImageData[currentImageIndex].imageObject) {
+                currentCtx.clearRect(0, 0, canvas.width, canvas.height);
+                const placeholderWidth = canvas.width > 0 ? canvas.width : 300; const placeholderHeight = canvas.height > 0 ? canvas.height : 200;
+                if (canvas.width === 0 || canvas.height === 0) { canvas.width = placeholderWidth; canvas.height = placeholderHeight; }
+                currentCtx.fillStyle = "#e5e7eb"; currentCtx.fillRect(0, 0, placeholderWidth, placeholderHeight);
+                currentCtx.fillStyle = "#6b7280"; currentCtx.font = "16px Inter, sans-serif"; currentCtx.textAlign = "center";
+                currentCtx.fillText("Kein Bild geladen", placeholderWidth / 2, placeholderHeight / 2);
+                canvasContainer.style.width = `${placeholderWidth}px`; canvasContainer.style.height = `${placeholderHeight}px`;
+                return;
+            }
+            const imageData = allImageData[currentImageIndex];
+            currentCtx.clearRect(0, 0, canvas.width, canvas.height); 
+            try { currentCtx.drawImage(imageData.imageObject, 0, 0, canvas.width, canvas.height); } 
+            catch (e) {
+                console.error("Zeichenfehler: ", e); currentCtx.fillStyle = "#fecaca"; currentCtx.fillRect(0, 0, canvas.width, canvas.height);
+                currentCtx.fillStyle = "#991b1b"; currentCtx.font = "16px Inter, sans-serif"; currentCtx.textAlign = "center";
+                currentCtx.fillText("Bild Anzeigefehler", canvas.width / 2, canvas.height / 2);
+                canvasContainer.style.width = `${canvas.width}px`; canvasContainer.style.height = `${canvas.height}px`; return;
+            }
+
+            imageData.annotations.forEach(ann => {
+                currentCtx.lineWidth = BASE_LINE_WIDTH / currentCssZoom; 
+                currentCtx.font = `${BASE_FONT_SIZE / currentCssZoom}px Inter, sans-serif`; 
+                let strokeColor = 'rgba(239, 68, 68, 0.7)'; let labelBgColor = 'rgba(107, 114, 128, 0.75)'; 
+                if (ann.id === selectedAnnotationId) { strokeColor = 'rgba(59, 130, 246, 0.9)'; labelBgColor = 'rgba(59, 130, 246, 0.75)'; }
+                currentCtx.strokeStyle = strokeColor;
+                if (ann.type === 'rect') {
+                    currentCtx.strokeRect(ann.x, ann.y, ann.width, ann.height);
+                    if (ann.label) {
+                        const textMetrics = currentCtx.measureText(ann.label); const textWidth = textMetrics.width;
+                        const labelHeight = BASE_FONT_SIZE / currentCssZoom * 1.2; 
+                        currentCtx.fillStyle = labelBgColor; 
+                        currentCtx.fillRect(ann.x, ann.y - labelHeight, textWidth + (8 / currentCssZoom) , labelHeight);
+                        currentCtx.fillStyle = 'white';  currentCtx.fillText(ann.label, ann.x + (4 / currentCssZoom), ann.y - (4 / currentCssZoom) );
+                    }
+                } else if (ann.type === 'polygon') {
+                    if (ann.points.length > 1) {
+                        currentCtx.beginPath(); currentCtx.moveTo(ann.points[0].x, ann.points[0].y);
+                        for (let i = 1; i < ann.points.length; i++) currentCtx.lineTo(ann.points[i].x, ann.points[i].y);
+                        currentCtx.closePath(); currentCtx.stroke();
+                        if (ann.label && ann.points.length > 0) {
+                             const textWidth = currentCtx.measureText(ann.label).width;
+                             const labelHeight = BASE_FONT_SIZE / currentCssZoom * 1.2;
+                             currentCtx.fillStyle = labelBgColor; currentCtx.fillRect(ann.points[0].x, ann.points[0].y - labelHeight, textWidth + (8/currentCssZoom), labelHeight);
+                             currentCtx.fillStyle = 'white'; currentCtx.fillText(ann.label, ann.points[0].x + (4/currentCssZoom), ann.points[0].y - (4/currentCssZoom));
+                        }
+                    }
+                    currentCtx.fillStyle = strokeColor; 
+                    const pointRadius = 3 / currentCssZoom; 
+                    ann.points.forEach(p => { currentCtx.beginPath(); currentCtx.arc(p.x, p.y, pointRadius, 0, 2 * Math.PI); currentCtx.fill(); });
+                }
+            });
+            
+            if (currentTool === 'polygon' && currentPolygonPoints.length > 0) {
+                currentCtx.save();
+                currentCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; 
+                currentCtx.fillStyle = 'rgba(59, 130, 246, 0.8)';
+                currentCtx.lineWidth = BASE_LINE_WIDTH / currentCssZoom;
+                const pointRadius = 3 / currentCssZoom; 
+                currentPolygonPoints.forEach(p => { currentCtx.beginPath(); currentCtx.arc(p.x, p.y, pointRadius, 0, 2 * Math.PI); currentCtx.fill(); });
+                if (currentPolygonPoints.length > 1) {
+                    currentCtx.beginPath();
+                    currentCtx.moveTo(currentPolygonPoints[0].x, currentPolygonPoints[0].y);
+                    for (let i = 1; i < currentPolygonPoints.length; i++) currentCtx.lineTo(currentPolygonPoints[i].x, currentPolygonPoints[i].y);
+                    currentCtx.stroke();
+                }
+                currentCtx.restore();
+            }
+        }
+        
+        function createResizeHandles(annotation) {
+            removeResizeHandles(); 
+            if (!annotation || annotation.type !== 'rect' || currentTool !== 'select' || currentImageIndex === -1) return;
+            const handleVisualSize = HANDLE_SIZE / currentCssZoom; 
+            const handleOffset = handleVisualSize / 2;
+            const handlesData = [
+                { name: 'nw', x: annotation.x, y: annotation.y }, { name: 'ne', x: annotation.x + annotation.width, y: annotation.y },
+                { name: 'sw', x: annotation.x, y: annotation.y + annotation.height }, { name: 'se', x: annotation.x + annotation.width, y: annotation.y + annotation.height },
+                { name: 'n', x: annotation.x + annotation.width / 2, y: annotation.y }, { name: 's', x: annotation.x + annotation.width / 2, y: annotation.y + annotation.height },
+                { name: 'w', x: annotation.x, y: annotation.y + annotation.height / 2 }, { name: 'e', x: annotation.x + annotation.width, y: annotation.y + annotation.height / 2 },
+            ];
+            handlesData.forEach(hData => {
+                const handleDiv = document.createElement('div');
+                handleDiv.classList.add('resize-handle', `${hData.name}-handle`);
+                handleDiv.style.left = `${hData.x - handleOffset}px`; 
+                handleDiv.style.top = `${hData.y - handleOffset}px`;
+                handleDiv.style.width = `${handleVisualSize}px`;
+                handleDiv.style.height = `${handleVisualSize}px`;
+                handleDiv.style.cursor = hData.cursor || 'default'; 
+                handleDiv.dataset.handle = hData.name; 
+                resizeHandlesContainer.appendChild(handleDiv);
+            });
+        }
+
+        function updateResizeHandles(annotation) { removeResizeHandles(); if (annotation) createResizeHandles(annotation); }
+        function removeResizeHandles() { resizeHandlesContainer.innerHTML = ''; }
+
+        function updateAnnotationList() {
+            annotationListDiv.innerHTML = '';
+            if (currentImageIndex === -1 || !allImageData[currentImageIndex] || allImageData[currentImageIndex].annotations.length === 0) {
+                annotationListDiv.innerHTML = '<p class="text-sm text-gray-500">Keine Annotationen.</p>'; return;
+            }
+            const currentAnnotations = allImageData[currentImageIndex].annotations;
+            const ul = document.createElement('ul'); ul.className = 'space-y-1';
+            currentAnnotations.forEach(ann => {
+                const li = document.createElement('li');
+                li.textContent = `${ann.type==='rect'?'Box':'Polygon'} ${ann.id%10000} ${ann.label?`(${ann.label})`:'(Ohne Label)'}`; 
+                li.className = 'annotation-list-item p-2 text-sm border rounded-md hover:bg-gray-100 tc';
+                if (ann.id === selectedAnnotationId) li.classList.add('selected', 'border-blue-500', 'font-semibold');
+                li.addEventListener('click', () => {
+                    selectedAnnotationId = ann.id; currentTool = 'select'; 
+                    updateToolButtons(); removeResizeHandles(); 
+                    if (ann.type === 'rect') createResizeHandles(ann);
+                    updateAnnotationList(); redrawCanvas();
+                });
+                ul.appendChild(li);
+            });
+            annotationListDiv.appendChild(ul);
+        }
+
+        function handleDeleteAnnotation() {
+            if (selectedAnnotationId !== null && currentImageIndex !== -1) {
+                allImageData[currentImageIndex].annotations = allImageData[currentImageIndex].annotations.filter(ann => ann.id !== selectedAnnotationId);
+                selectedAnnotationId = null; removeResizeHandles(); updateAnnotationList(); redrawCanvas();
+            } else { showCustomAlert("Wähle Annotation zum Löschen."); }
+        }
+        
+        function showCustomAlert(message) { alert(message); } 
+
+        function exportAllToPascalVoc() {
+            console.log("exportAllToPascalVoc function entered.");
+            if (typeof JSZip === 'undefined') {
+                console.error("JSZip is not loaded!");
+                showCustomAlert("Fehler: JSZip-Bibliothek konnte nicht geladen werden."); return;
+            }
+            if (allImageData.length === 0) { showCustomAlert("Keine Bilder/Annotationen."); return; }
+            const zip = new JSZip(); let filesGenerated = 0;
+            allImageData.forEach(imageData => {
+                const relevantAnnotations = imageData.annotations.filter(ann => ann.type === 'rect' || (ann.type === 'polygon' && ann.points && ann.points.length > 0));
+                if (relevantAnnotations.length === 0) return; 
+
+                let xmlContent = `<annotation>\n\t<folder>Unknown</folder>\n\t<filename>${imageData.name}</filename>\n\t<path>${imageData.name}</path>\n`;
+                xmlContent += `\t<source><database>HTML Annotator</database></source>\n\t<size>\n`;
+                xmlContent += `\t\t<width>${imageData.originalWidth}</width>\n\t\t<height>${imageData.originalHeight}</height>\n\t\t<depth>3</depth>\n`;
+                xmlContent += `\t</size>\n\t<segmented>0</segmented>\n`; 
+                
+                relevantAnnotations.forEach(ann => {
+                    let x1_raw = ann.x;
+                    let y1_raw = ann.y;
+                    let x2_raw, y2_raw;
+
+                    if (ann.type === 'rect') {
+                        x2_raw = ann.x + ann.width;
+                        y2_raw = ann.y + ann.height;
+                    } else if (ann.type === 'polygon') {
+                        let minX_poly = Infinity, minY_poly = Infinity, maxX_poly = -Infinity, maxY_poly = -Infinity;
+                        ann.points.forEach(p => {
+                            minX_poly = Math.min(minX_poly, p.x); minY_poly = Math.min(minY_poly, p.y);
+                            maxX_poly = Math.max(maxX_poly, p.x); maxY_poly = Math.max(maxY_poly, p.y);
+                        });
+                        x1_raw = minX_poly; y1_raw = minY_poly;
+                        x2_raw = maxX_poly; y2_raw = maxY_poly;
+                    } else { return; }
+                    
+                    const xmin = Math.round(Math.min(x1_raw, x2_raw));
+                    const ymin = Math.round(Math.min(y1_raw, y2_raw));
+                    const xmax = Math.round(Math.max(x1_raw, x2_raw));
+                    const ymax = Math.round(Math.max(y1_raw, y2_raw));
+
+                    if (xmax <= xmin || ymax <= ymin) {
+                        console.warn(`Skipping invalid box (Pascal VOC) for export (id: ${ann.id}): [${xmin}, ${ymin}, ${xmax}, ${ymax}]`);
+                        return; 
+                    }
+
+                    xmlContent += `\t<object>\n\t\t<name>${ann.label || 'unlabeled'}</name>\n\t\t<pose>Unspecified</pose>\n`;
+                    xmlContent += `\t\t<truncated>${ann.truncated ? 1 : 0}</truncated>\n\t\t<difficult>${ann.difficult ? 1 : 0}</difficult>\n\t\t<bndbox>\n`; 
+                    xmlContent += `\t\t\t<xmin>${xmin}</xmin>\n\t\t\t<ymin>${ymin}</ymin>\n`;
+                    xmlContent += `\t\t\t<xmax>${xmax}</xmax>\n\t\t\t<ymax>${ymax}</ymax>\n`;
+                    xmlContent += `\t\t</bndbox>\n\t</object>\n`;
+                });
+                xmlContent += `</annotation>`;
+                zip.file(`${imageData.name.split('.')[0]}.xml`, xmlContent); filesGenerated++;
+            });
+            if (filesGenerated > 0) {
+                zip.generateAsync({type:"blob"}).then(content => {
+                    console.log("Pascal VOC ZIP generated, attempting download.");
+                    downloadFile(content, "pascal_voc_annotations.zip", "application/zip");
+                }).catch(err => { console.error("Error generating Pascal VOC ZIP:", err); showCustomAlert("Fehler beim Erstellen der ZIP."); });
+                showCustomAlert("Pascal VOC Export gestartet.");
+            } else { showCustomAlert("Keine Annotationen für VOC Export."); }
+        }
+
+        function exportAllToCoco() {
+            console.log("exportAllToCoco function entered.");
+            if (allImageData.length === 0) { showCustomAlert("Keine Bilder/Annotationen."); return; }
+            const cocoData = { info: { description: "HTML Annotator Output", version: "1.0", year: new Date().getFullYear(), date_created: new Date().toISOString() }, licenses: [{ url: "about:blank", id: 1, name: "Default" }], images: [], annotations: [], categories: [] };
+            const categoryMap = new Map(); let nextCategoryId = 1; let annotationIdCounter = 1; let hasAnyAnnotations = false;
+            allImageData.forEach((imageData, imageIndex) => {
+                const imageId = imageIndex + 1; 
+                cocoData.images.push({ id: imageId, width: imageData.originalWidth, height: imageData.originalHeight, file_name: imageData.name, license: 1, date_captured: new Date().toISOString() });
+                if (imageData.annotations.length > 0) hasAnyAnnotations = true;
+                imageData.annotations.forEach(ann => {
+                    const label = ann.label || 'unlabeled'; let categoryId;
+                    if (categoryMap.has(label)) { categoryId = categoryMap.get(label).id; } 
+                    else { categoryId = nextCategoryId++; const newCategory = { id: categoryId, name: label, supercategory: 'object' }; categoryMap.set(label, newCategory); cocoData.categories.push(newCategory); }
+                    
+                    const cocoAnnotation = { 
+                        id: annotationIdCounter++, 
+                        image_id: imageId, 
+                        category_id: categoryId, 
+                        iscrowd: ann.iscrowd ? 1 : 0 
+                    };
+                    
+                    let x_coco, y_coco, width_coco, height_coco;
+
+                    if (ann.type === 'rect') {
+                        x_coco = Math.round(ann.x);
+                        y_coco = Math.round(ann.y);
+                        width_coco = Math.round(ann.width);
+                        height_coco = Math.round(ann.height);
+                    } else if (ann.type === 'polygon' && ann.points.length > 0) {
+                        let minX_poly = Infinity, minY_poly = Infinity, maxX_poly = -Infinity, maxY_poly = -Infinity;
+                        ann.points.forEach(p => {
+                            minX_poly = Math.min(minX_poly, p.x); minY_poly = Math.min(minY_poly, p.y);
+                            maxX_poly = Math.max(maxX_poly, p.x); maxY_poly = Math.max(maxY_poly, p.y);
+                        });
+                        x_coco = Math.round(minX_poly);
+                        y_coco = Math.round(minY_poly);
+                        width_coco = Math.round(maxX_poly - minX_poly);
+                        height_coco = Math.round(maxY_poly - minY_poly);
+                        
+                        cocoAnnotation.segmentation = [ann.points.reduce((acc, p) => acc.concat(Math.round(p.x), Math.round(p.y)), [])];
+                    } else { return; }
+
+                    if (width_coco <= 0 || height_coco <= 0) {
+                        console.warn(`Skipping invalid box (COCO) for export (id: ${ann.id}): [${x_coco}, ${y_coco}, ${width_coco}, ${height_coco}]`);
+                        return;
+                    }
+
+                    cocoAnnotation.bbox = [x_coco, y_coco, width_coco, height_coco];
+                    cocoAnnotation.area = width_coco * height_coco;
+                    
+                    // Für Rechtecke auch Segmentation hinzufügen, wie es COCO oft erwartet
+                    if (ann.type === 'rect' && !cocoAnnotation.segmentation) {
+                         cocoAnnotation.segmentation = [[ 
+                            x_coco, y_coco, 
+                            x_coco + width_coco, y_coco, 
+                            x_coco + width_coco, y_coco + height_coco, 
+                            x_coco, y_coco + height_coco 
+                        ]];
+                    }
+                    cocoData.annotations.push(cocoAnnotation);
+                });
+            });
+            if (cocoData.images.length > 0) { 
+                 console.log("COCO JSON generated, attempting download.");
+                 downloadFile(JSON.stringify(cocoData, null, 2), "coco_annotations.json", 'application/json');
+                 showCustomAlert(hasAnyAnnotations ? "COCO Export gestartet." : "COCO Export (nur Bildinformationen).");
+            } else { showCustomAlert("Nichts zu exportieren."); }
+        }
+        
+        function calculatePolygonArea(v) { let a=0;let j=v.length-1; for(let i=0;i<v.length;i++){a+=(v[j].x+v[i].x)*(v[j].y-v[i].y);j=i;} return Math.abs(a/2); }
+        function downloadFile(content,fileName,contentType) { 
+            console.log(`Download: ${fileName}, Typ: ${contentType}`);
+            const a=document.createElement("a"); 
+            const file=new Blob([content],{type:contentType}); 
+            a.href=URL.createObjectURL(file); 
+            a.download=fileName; 
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); 
+            URL.revokeObjectURL(a.href);
+            console.log(`${fileName} Download gestartet.`);
+        }
+        
+        updateToolButtons();
+        updateImageCounter();
+        updateGlobalLabelList(); 
+        applyZoom(1.0); 
+        redrawCanvas(); 
+    }); 
+    </script>
+</body>
+</html>
+
+
