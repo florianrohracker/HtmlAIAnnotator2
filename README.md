@@ -1,5 +1,4 @@
-# HtmlAIAnnotator2
-Standalone Coco and Pascal Annotator for Webintegration. Annotation of Boundingboxes and Polygones for training AI Object detections
+
 # HTML Bild-Annotator
 
 Ein einfacher, aber leistungsstarker, client-seitiger Bild-Annotator, der direkt im Browser läuft. Dieses Tool wurde entwickelt, um das Erstellen von Annotationen für Objekterkennungs-Workflows zu beschleunigen. Es erfordert keine Installation oder serverseitige Komponenten – einfach die HTML-Datei öffnen und loslegen.
